@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Lights</string>
+    <string name="count_many">%d on</string>
+    <string name="count_one">%d on</string>
+    <string name="empty_bad">Lights configuration unreadable or incomplete</string>
+    <string name="empty_missing">No light configured</string>
+    <string name="empty_waiting">One moment…</string>
+    <string name="follow_subtitle">The colour changes with the music</string>
+    <string name="follow_title">Follow the cover</string>
+    <string name="hint_home">OK: switch or choose · Hold OK: settings</string>
+    <string name="hint_settings">Arrows: choose · OK: confirm · Back: close</string>
+    <string name="intensity_label">Sync intensity</string>
+    <string name="intensity_lively">Vivid</string>
+    <string name="intensity_normal">Normal</string>
+    <string name="intensity_soft">Soft</string>
+    <string name="note_connected">Lights connected</string>
+    <string name="note_connecting">Connecting to the lights…</string>
+    <string name="note_no_config">No configuration</string>
+    <string name="note_unreachable">Lights not answering</string>
+    <string name="percent">%d %%</string>
+    <string name="scene_all_off">All off</string>
+    <string name="scene_all_on">All on</string>
+    <string name="scene_cinema">Cinema</string>
+    <string name="scene_evening">Evening</string>
+    <string name="state_connecting">Connecting…</string>
+    <string name="state_cover">Cover</string>
+    <string name="state_off">Off</string>
+    <string name="state_unreachable">Not answering</string>
+    <string name="sw_blue">Blue</string>
+    <string name="sw_cool">Cool white</string>
+    <string name="sw_cyan">Cyan</string>
+    <string name="sw_green">Green</string>
+    <string name="sw_neutral">White</string>
+    <string name="sw_orange">Orange</string>
+    <string name="sw_red">Red</string>
+    <string name="sw_violet">Violet</string>
+    <string name="sw_warm">Warm white</string>
+    <string name="sw_yellow">Yellow</string>
+    <string name="sync_all">Sync all</string>
+    <string name="sync_off">Unsync all</string>
+</resources>

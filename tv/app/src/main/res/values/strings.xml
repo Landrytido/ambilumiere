@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Lumières</string>
+    <string name="count_many">%d allumées</string>
+    <string name="count_one">%d allumée</string>
+    <string name="empty_bad">Configuration des lumières illisible ou incomplète</string>
+    <string name="empty_missing">Aucune lumière configurée</string>
+    <string name="empty_waiting">Un instant…</string>
+    <string name="follow_subtitle">La couleur change avec la musique</string>
+    <string name="follow_title">Suivre la pochette</string>
+    <string name="hint_home">OK : allumer, éteindre ou choisir · Maintenir OK : réglages</string>
+    <string name="hint_settings">Flèches : choisir · OK : valider · Retour : fermer</string>
+    <string name="intensity_label">Intensité de la synchro</string>
+    <string name="intensity_lively">Vif</string>
+    <string name="intensity_normal">Normal</string>
+    <string name="intensity_soft">Doux</string>
+    <string name="note_connected">Lumières connectées</string>
+    <string name="note_connecting">Connexion aux lumières…</string>
+    <string name="note_no_config">Pas de configuration</string>
+    <string name="note_unreachable">Lumières injoignables</string>
+    <string name="percent">%d %%</string>
+    <string name="scene_all_off">Tout éteindre</string>
+    <string name="scene_all_on">Tout allumer</string>
+    <string name="scene_cinema">Cinéma</string>
+    <string name="scene_evening">Soirée</string>
+    <string name="state_connecting">Connexion…</string>
+    <string name="state_cover">Pochette</string>
+    <string name="state_off">Éteint</string>
+    <string name="state_unreachable">Injoignable</string>
+    <string name="sw_blue">Bleu</string>
+    <string name="sw_cool">Blanc froid</string>
+    <string name="sw_cyan">Cyan</string>
+    <string name="sw_green">Vert</string>
+    <string name="sw_neutral">Blanc</string>
+    <string name="sw_orange">Orange</string>
+    <string name="sw_red">Rouge</string>
+    <string name="sw_violet">Violet</string>
+    <string name="sw_warm">Blanc chaud</string>
+    <string name="sw_yellow">Jaune</string>
+    <string name="sync_all">Synchroniser</string>
+    <string name="sync_off">Désynchroniser</string>
+</resources>

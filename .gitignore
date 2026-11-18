@@ -1,0 +1,11 @@
+﻿build/
+.gradle/
+local.properties
+*.apk
+lights.json
+devices.json
+tinytuya.json
+tuya-raw.json
+lumieres-config.json
+*.jks
+*.keystore

@@ -1,0 +1,1593 @@
+diff --git a/launcher/app/src/main/AndroidManifest.xml b/launcher/app/src/main/AndroidManifest.xml
+index ca18afa9..73a167f1 100644
+--- a/launcher/app/src/main/AndroidManifest.xml
++++ b/launcher/app/src/main/AndroidManifest.xml
+@@ -21,10 +21,16 @@
+     <!-- YaOS (Yandex TV OS): HDMI, AV and the tuner all play in com.yandex.tv.live, whose activities require
+          this permission (protection level normal, so it is granted at install). Ignored on other TVs. -->
+     <uses-permission android:name="yandex.tv.permission.ACCESS_TV_SOURCE" />
++    <!-- The gear menu's Free memory row: asks Android to end the background processes of the apps Home lists (normal permission, granted at install). -->
++    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
+ 
+     <!-- Android 11+ package visibility: lets the launcher list the TV apps it shows as tiles, and the
+          apps that declare a module card (docs/specs/card.md). -->
+     <queries>
++        <!-- The brightness module, so the gear menu can offer its quick bar when it is installed. -->
++        <package android:name="io.github.maxhayim.brightness" />
++        <!-- The Lights add-on (com.gathin.tvlights), so Home sees it and can show it as a top bar button (top_bar_apps). -->
++        <package android:name="com.gathin.tvlights" />
+         <!-- The standard settings handlers, so package visibility doesn't hide them and send the pills to a vendor fallback by mistake. -->
+         <intent>
+             <action android:name="android.settings.SETTINGS" />
+@@ -231,6 +237,17 @@
+                 <action android:name="android.service.notification.NotificationListenerService" />
+             </intent-filter>
+         </service>
++        <!-- Lets Home read what a music app is playing (NowPlaying), nothing else: it reads no notification.
++             Granted over adb: cmd notification allow_listener com.gathin.tvhome/.MediaListener -->
++        <service
++            android:name=".MediaListener"
++            android:exported="true"
++            android:label="@string/app_name"
++            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
++            <intent-filter>
++                <action android:name="android.service.notification.NotificationListenerService" />
++            </intent-filter>
++        </service>
+         <receiver
+             android:name=".GuardConfig"
+             android:exported="true"
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/AppLibraryDialog.java b/launcher/app/src/main/java/com/gathin/tvhome/AppLibraryDialog.java
+index 3733b517..e112c298 100644
+--- a/launcher/app/src/main/java/com/gathin/tvhome/AppLibraryDialog.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/AppLibraryDialog.java
+@@ -31,7 +31,7 @@ import androidx.annotation.NonNull;
+ import androidx.dynamicanimation.animation.FloatPropertyCompat;
+ import androidx.dynamicanimation.animation.SpringAnimation;
+ import androidx.dynamicanimation.animation.SpringForce;
+-import androidx.recyclerview.widget.LinearLayoutManager;
++import androidx.recyclerview.widget.GridLayoutManager;
+ import androidx.recyclerview.widget.RecyclerView;
+ 
+ import java.text.Collator;
+@@ -103,6 +103,8 @@ final class AppLibraryDialog {
+     private float scrollOffset;
+     private boolean highlightShown;
+     private final int catalogWidth;
++    /** The catalogue is a grid of this many columns, scrolling down. */
++    private static final int COLUMNS = 6;
+ 
+     private void stopHighlight() {
+         if (spring != null) spring.cancel();
+@@ -165,9 +167,9 @@ final class AppLibraryDialog {
+         panel.setPadding(dp(12), dp(8), dp(12), dp(12));
+         panel.setBackgroundResource(R.drawable.glass_panel);
+         View decor = activity.getWindow().getDecorView();
+-        catalogWidth = Math.min(dp(800), Math.max(dp(200), decor.getWidth() - dp(64)));
++        catalogWidth = Math.min(dp(840), Math.max(dp(200), decor.getWidth() - dp(64)));
+         int width = catalogWidth;
+-        int height = dp(280);
++        int height = dp(440);
+         popup = new PopupWindow(panel, width, height, true);
+         popup.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+         popup.setOutsideTouchable(true);
+@@ -350,7 +352,7 @@ final class AppLibraryDialog {
+ 
+     private void showCatalog() {
+         stopHighlight();
+-        resize(catalogWidth, dp(280));
++        resize(catalogWidth, dp(440));
+         panel.removeAllViews();
+         LinearLayout header = new LinearLayout(activity);
+         header.setLayoutDirection(View.LAYOUT_DIRECTION_LTR);
+@@ -392,9 +394,7 @@ final class AppLibraryDialog {
+         RecyclerView list = new RecyclerView(activity);
+         list.setLayoutDirection(rtl ? View.LAYOUT_DIRECTION_RTL : View.LAYOUT_DIRECTION_LTR);
+         catalog = list;
+-        list.setLayoutManager(new LinearLayoutManager(activity, RecyclerView.HORIZONTAL, false) {
+-            @Override protected boolean isLayoutRTL() { return rtl; }
+-        });
++        list.setLayoutManager(new GridLayoutManager(activity, COLUMNS));
+         list.setItemAnimator(null);
+         list.setOverScrollMode(View.OVER_SCROLL_NEVER);
+         list.setClipToPadding(false);
+@@ -418,6 +418,7 @@ final class AppLibraryDialog {
+             @Override public void onScrolled(@NonNull RecyclerView rv, int dx, int dy) {
+                 scrollOffset += dx;
+                 highlight.setTranslationX(highlight.getTranslationX() - dx);
++                highlight.setTranslationY(highlight.getTranslationY() - dy);
+             }
+         });
+         panel.addView(shelf, new LinearLayout.LayoutParams(-1, 0, 1));
+@@ -425,7 +426,7 @@ final class AppLibraryDialog {
+         for (int i = 0; i < apps.size(); i++) {
+             if (apps.get(i).activityInfo.packageName.equals(selectedPackage)) { position = i; break; }
+         }
+-        ((LinearLayoutManager) list.getLayoutManager()).scrollToPositionWithOffset(position, selectedOffset);
++        ((GridLayoutManager) list.getLayoutManager()).scrollToPositionWithOffset(position, 0);
+         final int target = position;
+         list.post(() -> {
+             if (catalog != list || !popup.isShowing()) return;
+@@ -610,10 +611,10 @@ final class AppLibraryDialog {
+     private final class Catalog extends RecyclerView.Adapter<Row> {
+         @NonNull @Override public Row onCreateViewHolder(@NonNull ViewGroup parent, int type) {
+             FrameLayout row = new FrameLayout(activity);
+-            RecyclerView.LayoutParams params = new RecyclerView.LayoutParams(dp(132), dp(170));
+-            params.setMargins(dp(6), dp(2), dp(6), dp(2));
++            RecyclerView.LayoutParams params = new RecyclerView.LayoutParams(-1, dp(124));
++            params.setMargins(dp(4), dp(3), dp(4), dp(3));
+             row.setLayoutParams(params);
+-            row.setPadding(dp(10), dp(12), dp(10), dp(10));
++            row.setPadding(dp(8), dp(10), dp(8), dp(6));
+             row.setFocusableInTouchMode(true);
+             row.setClickable(true);
+             LinearLayout content = new LinearLayout(activity);
+@@ -623,13 +624,13 @@ final class AppLibraryDialog {
+             ImageView icon = new ImageView(activity);
+             icon.setId(R.id.icon);
+             icon.setScaleType(ImageView.ScaleType.FIT_CENTER);
+-            content.addView(icon, new LinearLayout.LayoutParams(dp(60), dp(60)));
+-            TextView name = text("", 15, Color.WHITE);
++            content.addView(icon, new LinearLayout.LayoutParams(dp(52), dp(52)));
++            TextView name = text("", 13, Color.WHITE);
+             name.setId(R.id.title);
+             name.setGravity(Gravity.CENTER);
+             name.setMaxLines(2);
+-            LinearLayout.LayoutParams nameParams = new LinearLayout.LayoutParams(-1, dp(44));
+-            nameParams.topMargin = dp(10);
++            LinearLayout.LayoutParams nameParams = new LinearLayout.LayoutParams(-1, dp(36));
++            nameParams.topMargin = dp(8);
+             content.addView(name, nameParams);
+             TextView status = text("", 11, 0xBBFFFFFF);
+             status.setId(R.id.status);
+@@ -679,10 +680,24 @@ final class AppLibraryDialog {
+             });
+             holder.itemView.setOnKeyListener((v, key, event) -> {
+                 int index = holder.getBindingAdapterPosition();
+-                return event.getAction() == KeyEvent.ACTION_DOWN && (key == KeyEvent.KEYCODE_DPAD_UP
+-                        || key == KeyEvent.KEYCODE_DPAD_DOWN
+-                        || (rtl ? key == KeyEvent.KEYCODE_DPAD_RIGHT : key == KeyEvent.KEYCODE_DPAD_LEFT) && index == 0
+-                        || (rtl ? key == KeyEvent.KEYCODE_DPAD_LEFT : key == KeyEvent.KEYCODE_DPAD_RIGHT) && index == apps.size() - 1);
++                if (event.getAction() != KeyEvent.ACTION_DOWN || index == RecyclerView.NO_POSITION) return false;
++                int column = index % COLUMNS;
++                boolean last = index == apps.size() - 1;
++                // Edges stay put instead of leaving the catalogue; a short last row is reached by Down.
++                switch (key) {
++                    case KeyEvent.KEYCODE_DPAD_UP: return index < COLUMNS;
++                    case KeyEvent.KEYCODE_DPAD_DOWN:
++                        if (index + COLUMNS < apps.size()) return false;
++                        if (index / COLUMNS < (apps.size() - 1) / COLUMNS) {
++                            RecyclerView.ViewHolder tail = catalog == null ? null
++                                    : catalog.findViewHolderForAdapterPosition(apps.size() - 1);
++                            if (tail != null) tail.itemView.requestFocus();
++                        }
++                        return true;
++                    case KeyEvent.KEYCODE_DPAD_LEFT: return rtl ? column == COLUMNS - 1 || last : column == 0;
++                    case KeyEvent.KEYCODE_DPAD_RIGHT: return rtl ? column == 0 : column == COLUMNS - 1 || last;
++                    default: return false;
++                }
+             });
+         }
+         @Override public int getItemCount() { return apps.size(); }
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/ArtBackdrop.java b/launcher/app/src/main/java/com/gathin/tvhome/ArtBackdrop.java
+new file mode 100644
+index 00000000..6ecc089f
+--- /dev/null
++++ b/launcher/app/src/main/java/com/gathin/tvhome/ArtBackdrop.java
+@@ -0,0 +1,146 @@
++package com.gathin.tvhome;
++
++import android.content.Context;
++import android.graphics.Bitmap;
++import android.graphics.Canvas;
++import android.graphics.Paint;
++import android.graphics.Path;
++import android.graphics.Rect;
++import android.graphics.RectF;
++import android.view.View;
++import android.widget.ImageView;
++
++/**
++ * The playing song's cover as a layer over a wallpaper: Home's and the clock screensaver's. It fades in while a
++ * cover is available and out when the song is gone, so the wallpaper underneath comes back.
++ * The layer is the cover blurred (shrunk to a few dozen pixels and stretched back) over the whole 16:9 screen, and
++ * optionally the cover itself, sharp and whole, on top of it at coverShare of the screen's height, centred at
++ * coverCenter of its width. Home leaves the sharp cover to its now playing card; the screensaver shows it.
++ */
++final class ArtBackdrop {
++    private static final int SMALL = 24;
++    /** The layer is drawn at 720p and stretched to the screen: sharp enough, and 3.7 MB. */
++    private static final int WIDTH = 1280, HEIGHT = 720;
++    /** A light black over the blurred fill only (never the sharp cover), so text on top stays readable. */
++    private static final int SHADE = 0x33000000;
++    private static final long FADE_MS = 700L;
++
++    interface Listener {
++        /** The sharp cover came up (true) or went away (false). Main thread. */
++        void onCover(boolean up);
++    }
++
++    private final ImageView view;
++    private final float coverShare, coverCenter;
++    private final Listener listener;
++    /** The cover the layer was built from, to skip rebuilding it on every metadata update. */
++    private Bitmap shown;
++    private boolean up;
++
++    /** coverShare 0: blurred fill only. listener may be null. */
++    ArtBackdrop(Context ctx, float coverShare, float coverCenter, Listener listener) {
++        this.coverShare = coverShare;
++        this.coverCenter = coverCenter;
++        this.listener = listener;
++        view = new ImageView(ctx);
++        view.setScaleType(ImageView.ScaleType.CENTER_CROP);
++        view.setImportantForAccessibility(View.IMPORTANT_FOR_ACCESSIBILITY_NO);
++        view.setFocusable(false);
++        view.setAlpha(0f);
++        view.setVisibility(View.INVISIBLE);
++    }
++
++    ImageView view() {
++        return view;
++    }
++
++    /** True while the sharp cover is on screen or fading in. */
++    boolean coverUp() {
++        return up && coverShare > 0f;
++    }
++
++    /** track null or without a real cover: fade out. Otherwise show its cover, rebuilding only when it changed. */
++    void show(NowPlaying.Track track) {
++        Bitmap art = track != null && track.artIsCover ? track.art : null;
++        if (art == null) {
++            hide();
++            return;
++        }
++        if (art != shown) {
++            Bitmap built = build(art);
++            if (built == null) {
++                hide();
++                return;
++            }
++            view.setImageBitmap(built);
++            shown = art;
++        }
++        view.animate().cancel();
++        view.setVisibility(View.VISIBLE);
++        view.animate().alpha(1f).setDuration(FADE_MS).start();
++        setUp(true);
++    }
++
++    void hide() {
++        view.animate().cancel();
++        setUp(false);
++        if (view.getVisibility() != View.VISIBLE) return;
++        view.animate().alpha(0f).setDuration(FADE_MS)
++                .withEndAction(() -> {
++                    if (up) return;   // a song came back during the fade
++                    view.setVisibility(View.INVISIBLE);
++                    view.setImageDrawable(null);
++                    shown = null;
++                }).start();
++    }
++
++    /** Immediately gone, e.g. when the screen using it is stopped. */
++    void clear() {
++        view.animate().cancel();
++        view.setAlpha(0f);
++        view.setVisibility(View.INVISIBLE);
++        view.setImageDrawable(null);
++        shown = null;
++        up = false;
++    }
++
++    private void setUp(boolean now) {
++        if (up == now) return;
++        up = now;
++        if (listener != null && coverShare > 0f) listener.onCover(now);
++    }
++
++    private Bitmap build(Bitmap art) {
++        try {
++            Bitmap source = art.getConfig() == Bitmap.Config.HARDWARE ? art.copy(Bitmap.Config.ARGB_8888, false) : art;
++            if (source == null) return null;
++            int w = source.getWidth(), h = source.getHeight();
++            if (w <= 0 || h <= 0) return null;
++            int side = Math.min(w, h);
++            Rect square = new Rect((w - side) / 2, (h - side) / 2, (w - side) / 2 + side, (h - side) / 2 + side);
++            Paint smooth = new Paint(Paint.FILTER_BITMAP_FLAG | Paint.ANTI_ALIAS_FLAG | Paint.DITHER_FLAG);
++            Bitmap small = Bitmap.createBitmap(SMALL, SMALL, Bitmap.Config.ARGB_8888);
++            new Canvas(small).drawBitmap(source, square, new Rect(0, 0, SMALL, SMALL), smooth);
++            Bitmap out = Bitmap.createBitmap(WIDTH, HEIGHT, Bitmap.Config.ARGB_8888);
++            Canvas canvas = new Canvas(out);
++            canvas.drawBitmap(small, null, new Rect(0, 0, WIDTH, HEIGHT), smooth);
++            canvas.drawColor(SHADE);
++            if (coverShare > 0f) {
++                int cover = Math.round(HEIGHT * coverShare);
++                int left = Math.round(WIDTH * coverCenter) - cover / 2, top = (HEIGHT - cover) / 2;
++                Path round = new Path();
++                round.addRoundRect(new RectF(left, top, left + cover, top + cover), cover * 0.04f, cover * 0.04f,
++                        Path.Direction.CW);
++                canvas.save();
++                canvas.clipPath(round);
++                canvas.drawBitmap(source, square, new Rect(left, top, left + cover, top + cover), smooth);
++                canvas.restore();
++            }
++            small.recycle();
++            if (source != art) source.recycle();
++            return out;
++        } catch (RuntimeException | OutOfMemoryError failure) {
++            return null;
++        }
++    }
++}
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/ClockScene.java b/launcher/app/src/main/java/com/gathin/tvhome/ClockScene.java
+index dcae93ad..61497746 100644
+--- a/launcher/app/src/main/java/com/gathin/tvhome/ClockScene.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/ClockScene.java
+@@ -14,6 +14,7 @@ import android.os.Handler;
+ import android.os.Looper;
+ import android.util.DisplayMetrics;
+ import android.view.View;
++import android.view.ViewGroup;
+ import android.widget.ImageView;
+ 
+ import java.io.File;
+@@ -44,6 +45,8 @@ final class ClockScene {
+     private final View content;
+     private final ImageView ambient;
+     private final GradientDrawable glow;
++    private final ArtBackdrop art;
++    private NowPlaying music;
+     private int colorIndex;
+     private int glowColor;
+     /** clock_wallpaper or clock_glow false: something else (a picture, or plain black) replaced the coloured glow. */
+@@ -81,11 +84,22 @@ final class ClockScene {
+         ambient.setBackground(glow);
+         ambient.addOnLayoutChangeListener((v, l, t, r, b, ol, ot, or, ob) ->
+                 glow.setGradientRadius((r - l) * 0.55f));
++        // The playing song's cover goes over the wallpaper or glow, under the clock.
++        // With a song playing, the sharp cover sits on the left half and the clock keeps to the right half.
++        art = new ArtBackdrop(root.getContext(), 0.7f, 0.27f, up -> {
++            if (content.getWidth() > 0) moveClock();
++        });
++        ViewGroup parent = (ViewGroup) ambient.getParent();
++        parent.addView(art.view(), parent.indexOfChild(ambient) + 1, new ViewGroup.LayoutParams(
++                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+         colorIndex = random.nextInt(PALETTE.length);
+         setGlow(PALETTE[colorIndex]);
+     }
+ 
+     void start() {
++        // Home is stopped while the screensaver is up, so the scene reads what is playing itself.
++        if (music == null) music = new NowPlaying(content.getContext(), handler, art::show);
++        music.start();
+         content.setAlpha(0f);
+         content.post(() -> {
+             placeClock();
+@@ -97,6 +111,8 @@ final class ClockScene {
+     }
+ 
+     void stop() {
++        if (music != null) music.stop();
++        art.clear();
+         handler.removeCallbacksAndMessages(null);   // the tick and any glow steps still queued
+         content.animate().cancel();
+         wallpaperGeneration++;   // a decode still running must not attach its picture to a stopped scene
+@@ -234,7 +250,9 @@ final class ClockScene {
+         View parent = (View) content.getParent();
+         int maxX = Math.max(0, parent.getWidth() - content.getWidth());
+         int maxY = Math.max(0, parent.getHeight() - content.getHeight());
+-        float x = maxX * (0.1f + 0.8f * random.nextFloat());
++        // The cover takes the left half: the clock moves within the right half only.
++        float minX = art.coverUp() ? Math.min(maxX, parent.getWidth() * 0.5f) : 0f;
++        float x = minX + (maxX - minX) * (0.1f + 0.8f * random.nextFloat());
+         float y = maxY * (0.1f + 0.8f * random.nextFloat());
+         content.setX(x);
+         content.setY(y);
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/LibraryApps.java b/launcher/app/src/main/java/com/gathin/tvhome/LibraryApps.java
+index f2bdc2e8..3042b64f 100644
+--- a/launcher/app/src/main/java/com/gathin/tvhome/LibraryApps.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/LibraryApps.java
+@@ -123,9 +123,9 @@ final class LibraryApps {
+         return installedAt > 0 && installedAt <= now && now - installedAt <= RECENT_MS;
+     }
+ 
+-    /** Missing shortcuts first; recent installs lead that group. The caller sorts ties by label. */
++    /** Apps on Home first (the ones in use), then the others, recent installs first. The caller sorts ties by label. */
+     static int comparePriority(boolean homeA, long installedA, boolean homeB, long installedB, long now) {
+-        if (homeA != homeB) return homeA ? 1 : -1;
++        if (homeA != homeB) return homeA ? -1 : 1;
+         if (homeA) return 0;
+         boolean recentA = recent(installedA, now), recentB = recent(installedB, now);
+         if (recentA != recentB) return recentA ? -1 : 1;
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/LightsPalette.java b/launcher/app/src/main/java/com/gathin/tvhome/LightsPalette.java
+new file mode 100644
+index 00000000..ae7af543
+--- /dev/null
++++ b/launcher/app/src/main/java/com/gathin/tvhome/LightsPalette.java
+@@ -0,0 +1,131 @@
++package com.gathin.tvhome;
++
++import android.content.Context;
++import android.content.Intent;
++import android.graphics.Bitmap;
++import android.graphics.Color;
++import android.util.Log;
++
++import java.lang.ref.WeakReference;
++import java.util.ArrayList;
++import java.util.List;
++import java.util.Locale;
++
++/**
++ * Tells the lights what the cover looks like, through the system log: "colors=#RRGGBB,..." with four or five vivid,
++ * distinct colours of the playing song's cover, most present first, or "colors=off" when there is no cover to show.
++ * Something outside this app (a PC on adb logcat) reads the line; the launcher itself needs no network for it.
++ * One line per change: MediaListener feeds it from its own NowPlaying, and a line is only logged when it differs from the last.
++ */
++final class LightsPalette {
++    private static final String TAG = "CytvLights";
++    private static final String ADDON_PACKAGE = "com.gathin.tvlights";
++    private static final String ADDON_ACTION = "com.gathin.tvlights.PALETTE";
++    private static final int SIZE = 48;
++    /** Hue is sorted into 24 bins of 15 degrees; two picked colours are at least two bins (30 degrees) apart. */
++    private static final int BINS = 24;
++    private static final int MIN_COLORS = 4, MAX_COLORS = 5;
++    /** Pixels duller or darker than this are background, not colour. */
++    private static final float MIN_SATURATION = 0.25f, MIN_VALUE = 0.2f;
++    /** A hue needs this share of all the colour found to be picked. */
++    private static final float MIN_SHARE = 0.03f;
++
++    private static String lastLine;
++    private static WeakReference<Bitmap> cachedArt = new WeakReference<>(null);
++    private static String cachedColors = "";
++
++    private LightsPalette() {
++    }
++
++    /**
++     * The song now shown (or null): logs its cover's colours, or "off" when no cover is shown, and hands the same
++     * line to the Lumieres add-on when it is installed (an explicit broadcast: the launcher needs no network).
++     * Main thread.
++     */
++    static synchronized void publish(Context ctx, NowPlaying.Track track) {
++        Bitmap art = track != null && track.artIsCover ? track.art : null;
++        String line;
++        if (art == null) {
++            line = "off";
++        } else {
++            if (cachedArt.get() != art) {
++                cachedColors = colors(art);
++                cachedArt = new WeakReference<>(art);
++            }
++            line = cachedColors;
++        }
++        if (line.equals(lastLine)) return;
++        lastLine = line;
++        Log.i(TAG, "colors=" + line);
++        ctx.sendBroadcast(new Intent(ADDON_ACTION).setPackage(ADDON_PACKAGE)
++                .addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES).putExtra("colors", line));
++    }
++
++    private static String colors(Bitmap art) {
++        int[] px = new int[SIZE * SIZE];
++        Bitmap small = Bitmap.createScaledBitmap(art, SIZE, SIZE, true);
++        small.getPixels(px, 0, SIZE, 0, 0, SIZE, SIZE);
++        if (small != art) small.recycle();
++
++        float[] weight = new float[BINS];
++        float[] red = new float[BINS], green = new float[BINS], blue = new float[BINS];
++        float total = 0f;
++        float[] hsv = new float[3];
++        for (int p : px) {
++            Color.colorToHSV(p, hsv);
++            if (hsv[1] < MIN_SATURATION || hsv[2] < MIN_VALUE) continue;
++            int bin = (int) (hsv[0] / 360f * BINS) % BINS;
++            float w = hsv[1] * hsv[2];
++            weight[bin] += w;
++            red[bin] += w * Color.red(p);
++            green[bin] += w * Color.green(p);
++            blue[bin] += w * Color.blue(p);
++            total += w;
++        }
++
++        List<Integer> picked = new ArrayList<>();
++        List<Integer> out = new ArrayList<>();
++        while (total > 0f && out.size() < MAX_COLORS) {
++            int best = -1;
++            for (int b = 0; b < BINS; b++) {
++                if (weight[b] < total * MIN_SHARE || (best >= 0 && weight[b] <= weight[best])) continue;
++                boolean apart = true;
++                for (int q : picked) {
++                    int d = Math.abs(b - q);
++                    if (Math.min(d, BINS - d) < 2) apart = false;
++                }
++                if (apart) best = b;
++            }
++            if (best < 0) break;
++            picked.add(best);
++            out.add(Color.rgb(Math.round(red[best] / weight[best]), Math.round(green[best] / weight[best]),
++                    Math.round(blue[best] / weight[best])));
++        }
++        if (out.isEmpty()) out.add(average(px));
++        for (int i = 0; out.size() < MIN_COLORS; i++) out.add(out.get(i));   // a cover of one or two hues: repeat them
++
++        StringBuilder line = new StringBuilder();
++        for (int c : out) {
++            Color.colorToHSV(c, hsv);
++            if (hsv[1] >= MIN_SATURATION) {   // lamps show a pale colour as white: keep a hue strong and bright
++                hsv[1] = Math.max(hsv[1], 0.5f);   // the add-on's Doux/Normal/Vif sets the strength; keep the cover's own look
++                hsv[2] = Math.max(hsv[2], 0.6f);
++            }
++            if (line.length() > 0) line.append(',');
++            line.append(String.format(Locale.US, "#%06X", Color.HSVToColor(hsv) & 0xFFFFFF));
++        }
++        return line.toString();
++    }
++
++    /** A grey or nearly black cover has no vivid hue: its mean colour, so the lights still follow its brightness. */
++    private static int average(int[] px) {
++        long r = 0, g = 0, b = 0;
++        for (int p : px) {
++            r += Color.red(p);
++            g += Color.green(p);
++            b += Color.blue(p);
++        }
++        int n = Math.max(1, px.length);
++        return Color.rgb((int) (r / n), (int) (g / n), (int) (b / n));
++    }
++}
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java b/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
+index eda36c89..1df3e179 100644
+--- a/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/MainActivity.java
+@@ -3,6 +3,7 @@ package com.gathin.tvhome;
+ import android.animation.ArgbEvaluator;
+ import android.animation.ValueAnimator;
+ import android.app.Activity;
++import android.app.ActivityManager;
+ import android.app.Dialog;
+ import android.content.ActivityNotFoundException;
+ import android.content.BroadcastReceiver;
+@@ -328,6 +329,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+     private PopupWindow openPopup;
+     /** Reorder mode is on (top-bar button). */
+     private boolean reordering;
++    /** Move chosen from the tile menu: the mode ends once the tile is put down, so the next hold opens the menu again. */
++    private boolean moveOnce;
+     /** Key of the tile being carried in reorder mode, or null. */
+     private String movingKey;
+     /** Tile order when reorder mode started, to save only when something moved. */
+@@ -357,6 +360,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+     private RecyclerView.OnScrollListener pendingFocusScroll;
+ 
+     private final Handler handler = new Handler(Looper.getMainLooper());
++    private NowPlaying nowPlaying;
++    private NowPlayingCard nowCard;
++    /** NowPlayingCard.songKey of the song the user closed with Menu; null when none. */
++    private String dismissedSong;
+     /** Refreshes the network pill when the connection changes: at boot Wi-Fi often connects after Home is shown. */
+     private final ConnectivityManager.NetworkCallback networkCallback = new ConnectivityManager.NetworkCallback() {
+         @Override
+@@ -837,6 +844,40 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         });
+         btnLibraryTop.setVisibility(cfg.libraryButton && cfg.appLibrary ? View.VISIBLE : View.GONE);
+         addTopBarApps(cfg.topBarApps, cfg.launchActions);
++        // Now playing: what a music app plays, as a display-only card under the top buttons. It shows only once
++        // MediaListener has notification access (see NowPlaying); nothing is sent anywhere.
++        nowCard = new NowPlayingCard(this, UiFont.get(this, R.string.font_medium), new NowPlayingCard.Exits() {
++            @Override
++            public void up() {
++                (btnSettings.getVisibility() == View.VISIBLE ? btnSettings : firstTopButton()).requestFocus();
++            }
++
++            @Override
++            public void down() {
++                focusTile(singleRow ? lastFocused : lastFocused % COLUMNS);
++            }
++
++            @Override
++            public void dismiss() {
++                dismissedSong = nowCard.songKey();
++                nowCard.bind(null);
++                wallpaperPlayer.showArt(null);
++                focusTile(singleRow ? lastFocused : lastFocused % COLUMNS);
++            }
++        });
++        FrameLayout.LayoutParams nowLp = new FrameLayout.LayoutParams(
++                FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP | Gravity.END);
++        nowLp.topMargin = Math.round(94 * density);
++        nowLp.setMarginEnd(Math.round(56 * density));
++        root.addView(nowCard, nowLp);
++        nowPlaying = new NowPlaying(this, handler, playing -> {
++            // A dismissed song stays hidden (card and cover) until another one plays.
++            String key = NowPlayingCard.songKey(playing);
++            NowPlaying.Track track = key != null && key.equals(dismissedSong) ? null : playing;
++            if (key == null || !key.equals(dismissedSong)) dismissedSong = null;
++            nowCard.bind(track);
++            wallpaperPlayer.showArt(track);
++        });
+         iconOnlyButtons = cfg.iconOnlyButtons;
+         topMenu = cfg.topMenu;
+         wifiIconOnly = iconOnlyButtons && cfg.wifiLabelWidth <= 0;
+@@ -890,6 +931,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+             if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
+             if (keyCode == KeyEvent.KEYCODE_DPAD_UP) return true;
+             if (keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
++                // The now playing card sits between the buttons and the dock: Down lands on it when it shows.
++                if (nowCard.canFocus()) {
++                    nowCard.requestFocus();
++                    return true;
++                }
+                 // Back to the dock tile Up came from, not wherever the focus finder lands.
+                 focusTile(singleRow ? lastFocused : lastFocused % COLUMNS);
+                 return true;
+@@ -1089,6 +1135,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         }
+         restartIdleClock();
+         promptsPaused = false;
++        nowPlaying.start();
+         if (grid.getAdapter() == null) grid.setAdapter(adapter);   // dropped by onTrimMemory
+         switch (tileRefresh.onResume(packagesChangedSinceRebuild())) {
+             case REBUILD:
+@@ -1306,6 +1353,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         handler.removeCallbacks(openWhenOnline);
+         startPending = null;   // leaving Home before the network came back: the boot's app stays closed
+         stopStats();
++        nowPlaying.stop();
++        nowCard.stop();
+         if (gameDay != null) gameDay.stop();
+         handler.removeCallbacks(turnTick);
+         if (lamp != null) lamp.stop();
+@@ -1445,7 +1494,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+                     return true;
+                 default:
+                     if (ok || back) {
+-                        if (!down) drop();
++                        if (!down) {
++                            drop();
++                            if (moveOnce) endReorder();
++                        }
+                         return true;
+                     }
+                     return super.dispatchKeyEvent(event);
+@@ -1642,6 +1694,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+     private void endReorder() {
+         if (!reordering) return;
+         dockEditing = false;
++        moveOnce = false;
+         dockEditSlot = -1;
+         dockEditAppKey = null;
+         drop();
+@@ -1784,6 +1837,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+     @Override
+     public void onTileFocused(int position, View card) {
+         lastFocused = position;
++        // The rows below the dock slide up under the top right: the now playing card steps aside until focus is back on the dock.
++        if (nowCard != null) nowCard.setSuppressed(dockRow && !singleRow && position >= COLUMNS);
+         lastFocusedKey = adapter.keyAt(position);
+         // Focus restored before the first layout (cold start): the tile has no size yet, and the glass
+         // would be sized to 2*pad. Run again once the tile is laid out.
+@@ -2468,6 +2523,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+     }
+ 
+     @Override public void onLibraryFocused() {
++        if (nowCard != null) nowCard.setSuppressed(true);
+         libraryFocusPending = false;
+         hideGlass();
+         hideHero();
+@@ -2583,6 +2639,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+             } catch (PackageManager.NameNotFoundException e) {
+                 continue;
+             }
++            final Drawable plainLogo = logo;
++            final Drawable focusLogo = isLightLogo(logo, size) ? darkCopy(logo) : null;   // a white glyph vanishes on the white focused pill
+             TextView button = (TextView) getLayoutInflater().inflate(R.layout.top_app_button, bar, false);
+             // pillKeys finds the bar's ends by id: without one of its own, every app button would be an end.
+             button.setId(View.generateViewId());
+@@ -2590,6 +2648,13 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+             button.setCompoundDrawablesRelative(logo, null, null, null);
+             button.setCompoundDrawableTintList(null);
+             button.setContentDescription(label);
++            if (focusLogo != null) {
++                button.setOnFocusChangeListener((v, focused) -> {
++                    Drawable shown = focused ? focusLogo : plainLogo;
++                    shown.setBounds(0, 0, size, size);
++                    ((TextView) v).setCompoundDrawablesRelative(shown, null, null, null);
++                });
++            }
+             Intent target = launch;
+             button.setOnClickListener(v -> open(new Intent(target)));
+             // After the network pill and the VPN pill; the Hebrew bar runs the other way, so before both there.
+@@ -2598,6 +2663,33 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         }
+     }
+ 
++    /** True for a logo made only of light pixels (a white glyph): it disappears on the pale focused pill. */
++    private static boolean isLightLogo(Drawable d, int size) {
++        android.graphics.Bitmap bmp = android.graphics.Bitmap.createBitmap(size, size, android.graphics.Bitmap.Config.ARGB_8888);
++        d.setBounds(0, 0, size, size);
++        d.draw(new android.graphics.Canvas(bmp));
++        int opaque = 0, light = 0;
++        for (int y = 0; y < size; y++) {
++            for (int x = 0; x < size; x++) {
++                int p = bmp.getPixel(x, y);
++                if (android.graphics.Color.alpha(p) < 128) continue;
++                opaque++;
++                if (Math.min(android.graphics.Color.red(p), Math.min(android.graphics.Color.green(p), android.graphics.Color.blue(p))) > 200) light++;
++            }
++        }
++        bmp.recycle();
++        return opaque > 0 && light >= opaque * 0.9;
++    }
++
++    /** A dark copy of a logo, shown while its button has focus; null when the logo cannot be copied. */
++    private static Drawable darkCopy(Drawable logo) {
++        Drawable.ConstantState state = logo.getConstantState();
++        if (state == null) return null;
++        Drawable dark = state.newDrawable().mutate();
++        dark.setColorFilter(0xFF101418, android.graphics.PorterDuff.Mode.SRC_IN);
++        return dark;
++    }
++
+     @Override public void onLibraryUp() {
+         if (adapter.appCount() == 0) { firstTopButton().requestFocus(); return; }
+         int lastRow = ((adapter.appCount() - 1) / COLUMNS) * COLUMNS;
+@@ -3661,6 +3753,13 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         PopupWindow popup = glassPopup(panel, (int) (220 * density));
+         // Inputs opens its own list once this one has closed.
+         if (showInputsMenuRow) addInputRow(rows, popup, R.drawable.ic_input, getString(R.string.inputs), -1, () -> root.post(this::showInputs));
++        addInputRow(rows, popup, R.drawable.ic_memory, getString(R.string.free_ram), -1, this::freeMemory);
++        // The brightness module's quick bar (Left/Right to dim, OK to close), offered only while it is installed.
++        Intent dimmer = new Intent().setComponent(new ComponentName("io.github.maxhayim.brightness",
++                "io.github.maxhayim.brightness.QuickActivity"));
++        if (getPackageManager().resolveActivity(dimmer, 0) != null) {
++            addInputRow(rows, popup, R.drawable.ic_brightness, getString(R.string.brightness), -1, () -> open(dimmer));
++        }
+         addInputRow(rows, popup, R.drawable.ic_wifi, getString(R.string.quick_network), -1, this::openNetworkPill);
+         CharSequence network = wifiIconOnly ? btnWifi.getContentDescription() : btnWifi.getText();
+         if (!TextUtils.isEmpty(network)) {
+@@ -3668,7 +3767,6 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+             status.setText(network);
+             status.setVisibility(View.VISIBLE);
+         }
+-        addInputRow(rows, popup, R.drawable.ic_swap_vert, getString(R.string.reorder), -1, this::toggleReorder);
+         if (launcherSettingsButton) {
+             addInputRow(rows, popup, R.drawable.ic_home_settings_pill, getString(R.string.launcher_settings), -1,
+                     () -> startActivityForResult(new Intent(this, LauncherSettingsActivity.class), LAUNCHER_SETTINGS_REQUEST));
+@@ -3682,6 +3780,33 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+         rows.getChildAt(0).requestFocus();
+     }
+ 
++    /**
++     * Free memory: asks Android to end the background processes of every app Home can see, as it would itself when
++     * memory runs low. The launcher, the music app that is playing and anything in the foreground are left alone.
++     * Reports how much memory is available afterwards, once the kills have landed.
++     */
++    private void freeMemory() {
++        ActivityManager am = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
++        if (am == null) return;
++        ActivityManager.MemoryInfo before = new ActivityManager.MemoryInfo();
++        am.getMemoryInfo(before);
++        String keep = nowCard != null ? nowCard.packageName() : null;
++        for (ApplicationInfo app : getPackageManager().getInstalledApplications(0)) {
++            String pkg = app.packageName;
++            if (pkg.equals(getPackageName()) || pkg.equals(keep)) continue;
++            try {
++                am.killBackgroundProcesses(pkg);
++            } catch (RuntimeException ignored) {
++            }
++        }
++        handler.postDelayed(() -> {
++            ActivityManager.MemoryInfo after = new ActivityManager.MemoryInfo();
++            am.getMemoryInfo(after);
++            long free = after.availMem >> 20, gained = Math.max(0, (after.availMem - before.availMem) >> 20);
++            Toast.makeText(this, getString(R.string.free_ram_done, free, gained), Toast.LENGTH_LONG).show();
++        }, 1500);
++    }
++
+     /** The header opens launcher settings directly; hold OK keeps the extra home actions available. */
+     private void showSettingsMenu() {
+         View anchor = findViewById(R.id.btnSettings);
+@@ -3827,6 +3952,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
+             if (at < 0) return;
+             focusTile(at);
+             pickUp(at);
++            moveOnce = true;
+             Toast.makeText(this, R.string.reorder_hint, Toast.LENGTH_LONG).show();
+         });
+         if (appLibraryEnabled) addSettingsMenuRow(rows, popup, R.string.library_remove_shortcut, () -> {
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/MediaListener.java b/launcher/app/src/main/java/com/gathin/tvhome/MediaListener.java
+new file mode 100644
+index 00000000..a810c9c9
+--- /dev/null
++++ b/launcher/app/src/main/java/com/gathin/tvhome/MediaListener.java
+@@ -0,0 +1,31 @@
++package com.gathin.tvhome;
++
++import android.os.Handler;
++import android.os.Looper;
++import android.service.notification.NotificationListenerService;
++
++/**
++ * Exists so the launcher can read media sessions (what is playing, see NowPlaying): Android
++ * gives that to apps with notification access. Granted over adb
++ * (cmd notification allow_listener); the launcher never reads or touches notifications.
++ * It also feeds the lights (LightsPalette) from here, so they follow the song whichever screen is up,
++ * not only while Home or the screensaver is showing.
++ * Adapted from majnioui/CleanXiaomiTV (MIT).
++ */
++public class MediaListener extends NotificationListenerService {
++    private NowPlaying music;
++
++    @Override
++    public void onListenerConnected() {
++        if (music == null) {
++            music = new NowPlaying(this, new Handler(Looper.getMainLooper()), track -> LightsPalette.publish(this, track));
++        }
++        music.start();
++    }
++
++    @Override
++    public void onListenerDisconnected() {
++        if (music != null) music.stop();
++        LightsPalette.publish(this, null);
++    }
++}
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/NowPlaying.java b/launcher/app/src/main/java/com/gathin/tvhome/NowPlaying.java
+new file mode 100644
+index 00000000..751307cf
+--- /dev/null
++++ b/launcher/app/src/main/java/com/gathin/tvhome/NowPlaying.java
+@@ -0,0 +1,272 @@
++package com.gathin.tvhome;
++
++import android.app.PendingIntent;
++import android.content.ComponentName;
++import android.content.Context;
++import android.content.Intent;
++import android.graphics.Bitmap;
++import android.media.MediaMetadata;
++import android.media.session.MediaController;
++import android.media.session.MediaSession;
++import android.media.session.MediaSessionManager;
++import android.media.session.PlaybackState;
++import android.os.Handler;
++import android.os.SystemClock;
++import android.provider.Settings;
++import android.util.Log;
++
++import java.util.ArrayList;
++import java.util.HashMap;
++import java.util.HashSet;
++import java.util.List;
++import java.util.Map;
++import java.util.Set;
++
++/**
++ * What is playing in any music app (Spotify, YouTube Music, ...), from Android's media sessions. Read-only:
++ * this launcher shows it and can open the app's player screen, and sends no playback command to the app.
++ * Needs notification access for MediaListener; without it, start() does nothing.
++ * Reports the playing session first, else a paused one, else nothing. A paused one counts only if it was
++ * seen playing (so a video left paused in its app doesn't show up as a song on Home), and only for
++ * PAUSED_FOR_MS after it was first seen paused: apps re-send their paused state now and then, which must
++ * not bring it back.
++ * Adapted from majnioui/CleanXiaomiTV (MIT): same logic, without the play/pause/skip/open commands.
++ */
++final class NowPlaying {
++    private static final String TAG = "TvHome.NowPlaying";
++    /** A song paused longer than this is no longer shown: you've moved on to something else. */
++    private static final long PAUSED_FOR_MS = 30_000L;
++    /** A new song on this TV is followed only after it has played locally this long (see publish()). */
++    private static final long LOCAL_STABLE_MS = 1_500L;
++
++    static final class Track {
++        final String title, artist;
++        final Bitmap art;
++        final boolean playing;
++        final MediaController controller;
++        /** Song length in ms, or 0 when the app doesn't say. */
++        final long duration;
++        /** True when art is the song's cover; false when it is only the app's icon (DISPLAY_ICON). */
++        final boolean artIsCover;
++
++        Track(String title, String artist, Bitmap art, boolean artIsCover, boolean playing, MediaController controller,
++              long duration) {
++            this.title = title;
++            this.artist = artist;
++            this.art = art;
++            this.artIsCover = artIsCover;
++            this.playing = playing;
++            this.controller = controller;
++            this.duration = duration;
++        }
++
++        /** Where playback is now, in ms, extrapolated from the session's last update; -1 when unknown. */
++        long position() {
++            PlaybackState s = controller.getPlaybackState();
++            if (s == null || s.getPosition() < 0) return -1;
++            long pos = s.getPosition();
++            if (s.getState() == PlaybackState.STATE_PLAYING) {
++                pos += (long) ((SystemClock.elapsedRealtime() - s.getLastPositionUpdateTime()) * s.getPlaybackSpeed());
++            }
++            return duration > 0 ? Math.min(pos, duration) : pos;
++        }
++    }
++
++    interface Listener {
++        /** Called on the handler's thread; null when nothing is playing or paused. */
++        void onNowPlaying(Track track);
++    }
++
++    private final Context ctx;
++    private final Handler handler;
++    private final Listener listener;
++    private final ComponentName component;
++    private MediaSessionManager msm;
++    private final List<MediaController> controllers = new ArrayList<>();
++    /** Sessions seen playing, and when each was first seen paused since (elapsedRealtime). Kept across stop(). */
++    private final Set<MediaSession.Token> seenPlaying = new HashSet<>();
++    private final Map<MediaSession.Token, Long> pausedSince = new HashMap<>();
++    /** When each session was first seen playing locally without a break (elapsedRealtime). */
++    private final Map<MediaSession.Token, Long> localSince = new HashMap<>();
++
++    private final MediaController.Callback callback = new MediaController.Callback() {
++        @Override
++        public void onPlaybackStateChanged(PlaybackState state) {
++            publish();
++        }
++
++        @Override
++        public void onMetadataChanged(MediaMetadata metadata) {
++            publish();
++        }
++
++        @Override
++        public void onAudioInfoChanged(MediaController.PlaybackInfo info) {
++            publish();   // local or remote may change while the session lives
++        }
++
++        @Override
++        public void onSessionDestroyed() {
++            publish();
++        }
++    };
++
++    private final MediaSessionManager.OnActiveSessionsChangedListener sessions = this::track;
++    /** Re-checks when a paused song runs out its PAUSED_FOR_MS, since no callback fires then. */
++    private final Runnable recheck = this::publish;
++
++    NowPlaying(Context ctx, Handler handler, Listener listener) {
++        this.ctx = ctx;
++        this.handler = handler;
++        this.listener = listener;
++        this.component = new ComponentName(ctx, MediaListener.class);
++    }
++
++    static boolean hasAccess(Context ctx) {
++        String enabled = Settings.Secure.getString(ctx.getContentResolver(), "enabled_notification_listeners");
++        return enabled != null && enabled.contains(new ComponentName(ctx, MediaListener.class).flattenToString());
++    }
++
++    void start() {
++        if (msm != null || !hasAccess(ctx)) return;
++        try {
++            msm = ctx.getSystemService(MediaSessionManager.class);
++            msm.addOnActiveSessionsChangedListener(sessions, component, handler);
++            track(msm.getActiveSessions(component));
++        } catch (SecurityException e) {
++            Log.w(TAG, "no access: " + e.getMessage());
++            msm = null;
++        }
++    }
++
++    void stop() {
++        handler.removeCallbacks(recheck);
++        if (msm != null) msm.removeOnActiveSessionsChangedListener(sessions);
++        msm = null;
++        for (MediaController c : controllers) c.unregisterCallback(callback);
++        controllers.clear();
++    }
++
++    private void track(List<MediaController> list) {
++        for (MediaController c : controllers) c.unregisterCallback(callback);
++        controllers.clear();
++        Set<MediaSession.Token> live = new HashSet<>();
++        if (list != null) {
++            for (MediaController c : list) {
++                c.registerCallback(callback, handler);
++                controllers.add(c);
++                live.add(c.getSessionToken());
++            }
++        }
++        seenPlaying.retainAll(live);
++        pausedSince.keySet().retainAll(live);
++        localSince.keySet().retainAll(live);
++        publish();
++    }
++
++    private void publish() {
++        handler.removeCallbacks(recheck);
++        MediaController best = null;
++        boolean bestPlaying = false;
++        long pausedLeft = -1;   // ms until the paused candidate expires
++        long settleIn = -1;     // ms until a song that has just started playing locally has settled
++        long now = SystemClock.elapsedRealtime();
++        for (MediaController c : controllers) {
++            PlaybackState s = c.getPlaybackState();
++            if (s == null || c.getMetadata() == null) continue;
++            // A remote session only mirrors what another device plays (a phone on the same Spotify account, say):
++            // the sound does not come from this TV, so neither the card nor the lights follow it.
++            MediaController.PlaybackInfo info = c.getPlaybackInfo();
++            MediaSession.Token token = c.getSessionToken();
++            if (info != null && info.getPlaybackType() == MediaController.PlaybackInfo.PLAYBACK_TYPE_REMOTE) {
++                // Forget it too: when the other device stops, the session turns local again but paused, and it must
++                // not come back as a song this TV played a moment ago.
++                seenPlaying.remove(token);
++                pausedSince.remove(token);
++                localSince.remove(token);
++                continue;
++            }
++            int st = s.getState();
++            boolean playing = st == PlaybackState.STATE_PLAYING || st == PlaybackState.STATE_BUFFERING;
++            if (playing) {
++                // When another device starts a song, the session shows up as local and playing for a fraction of a
++                // second before it says remote. Only a session that stays local for LOCAL_STABLE_MS counts.
++                Long first = localSince.get(token);
++                if (first == null) {
++                    first = now;
++                    localSince.put(token, first);
++                }
++                long wait = LOCAL_STABLE_MS - (now - first);
++                if (wait > 0) {
++                    playing = false;
++                    settleIn = settleIn < 0 ? wait : Math.min(settleIn, wait);
++                }
++            } else {
++                localSince.remove(token);
++            }
++            boolean paused = st == PlaybackState.STATE_PAUSED && seenPlaying.contains(token);
++            if (playing) seenPlaying.add(token);
++            if (st != PlaybackState.STATE_PAUSED) pausedSince.remove(token);
++            if (paused) {
++                Long since = pausedSince.get(token);
++                if (since == null) {
++                    since = Math.min(now, s.getLastPositionUpdateTime());
++                    pausedSince.put(token, since);
++                }
++                long left = PAUSED_FOR_MS - (now - since);
++                if (left <= 0) paused = false;   // paused too long ago: gone
++                else if (best == null) pausedLeft = left;
++            }
++            if (playing && !bestPlaying) {
++                best = c;
++                bestPlaying = true;
++            } else if (paused && best == null) {
++                best = c;
++            }
++        }
++        if (settleIn > 0) handler.postDelayed(recheck, settleIn + 50);
++        if (best == null) {
++            listener.onNowPlaying(null);
++            return;
++        }
++        if (!bestPlaying && pausedLeft > 0) handler.postDelayed(recheck, pausedLeft + 500);
++        MediaMetadata m = best.getMetadata();
++        String title = first(m, MediaMetadata.METADATA_KEY_DISPLAY_TITLE, MediaMetadata.METADATA_KEY_TITLE);
++        if (title.isEmpty()) {
++            listener.onNowPlaying(null);
++            return;
++        }
++        String artist = first(m, MediaMetadata.METADATA_KEY_DISPLAY_SUBTITLE, MediaMetadata.METADATA_KEY_ARTIST,
++                MediaMetadata.METADATA_KEY_ALBUM_ARTIST);
++        Bitmap art = m.getBitmap(MediaMetadata.METADATA_KEY_ALBUM_ART);
++        if (art == null) art = m.getBitmap(MediaMetadata.METADATA_KEY_ART);
++        boolean cover = art != null;
++        if (art == null) art = m.getBitmap(MediaMetadata.METADATA_KEY_DISPLAY_ICON);
++        listener.onNowPlaying(new Track(title, artist, art, cover, bestPlaying, best,
++                Math.max(0, m.getLong(MediaMetadata.METADATA_KEY_DURATION))));
++    }
++
++    /** The music app's own player screen, or failing that its launch screen. */
++    static void open(Context ctx, Track t) {
++        PendingIntent pi = t.controller.getSessionActivity();
++        try {
++            if (pi != null) {
++                pi.send();
++                return;
++            }
++        } catch (PendingIntent.CanceledException ignored) {
++        }
++        String pkg = t.controller.getPackageName();
++        Intent i = ctx.getPackageManager().getLeanbackLaunchIntentForPackage(pkg);
++        if (i == null) i = ctx.getPackageManager().getLaunchIntentForPackage(pkg);
++        if (i != null) ctx.startActivity(i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK));
++    }
++
++    private static String first(MediaMetadata m, String... keys) {
++        for (String k : keys) {
++            CharSequence v = m.getText(k);
++            if (v != null && v.toString().trim().length() > 0) return v.toString().trim();
++        }
++        return "";
++    }
++}
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/NowPlayingCard.java b/launcher/app/src/main/java/com/gathin/tvhome/NowPlayingCard.java
+new file mode 100644
+index 00000000..115d6692
+--- /dev/null
++++ b/launcher/app/src/main/java/com/gathin/tvhome/NowPlayingCard.java
+@@ -0,0 +1,362 @@
++package com.gathin.tvhome;
++
++import android.content.Context;
++import android.content.pm.PackageManager;
++import android.graphics.Bitmap;
++import android.graphics.BitmapShader;
++import android.graphics.Canvas;
++import android.graphics.Color;
++import android.graphics.Paint;
++import android.graphics.RectF;
++import android.graphics.Shader;
++import android.graphics.Typeface;
++import android.graphics.drawable.Drawable;
++import android.graphics.drawable.GradientDrawable;
++import android.graphics.drawable.LayerDrawable;
++import android.text.TextUtils;
++import android.util.TypedValue;
++import android.view.Gravity;
++import android.view.KeyEvent;
++import android.view.View;
++import android.widget.ImageView;
++import android.widget.LinearLayout;
++import android.widget.TextView;
++
++import java.util.Locale;
++
++/**
++ * The now playing card under the top button: the cover, the app's name and state ("SPOTIFY · NOW PLAYING"), the
++ * song and its artist, and a progress line with the time played and the song's length. The glass takes on the
++ * cover's colour, strongest behind the cover and fading to the right. No playback buttons: the remote's own
++ * play/pause keys reach the music app, and OK on the card opens the app's player screen. Up from the card goes
++ * back to the top button and Down on to the dock (see MainActivity). Dimmed while paused. Hidden when nothing is
++ * playing, and faded out while focus is on the rows below the dock, so the rows sliding up never pass under it.
++ * Adapted from majnioui/CleanXiaomiTV (MIT), simplified: no playback buttons, no equalizer, no glass backdrop.
++ */
++final class NowPlayingCard extends LinearLayout {
++    interface Exits {
++        void up();
++
++        void down();
++
++        /** Menu on the card: hide it, and the cover behind Home, until another song plays. */
++        void dismiss();
++    }
++
++    private static final int WIDTH = 156, PAD = 8, ART = 132, RADIUS = 22;
++    private static final long TICK_MS = 1000;
++
++    private final float density;
++    private final GradientDrawable glass;
++    private final ImageView art;
++    /** The cover's colour across the glass; transparent without a cover. */
++    private final GradientDrawable tint;
++    private final TextView kicker, title, artist, elapsed, total;
++    private final LinearLayout body;
++    private final ProgressLine progress;
++    private final LinearLayout times;
++    private NowPlaying.Track track;
++    /** The song the art on screen belongs to, and whether it is the real cover. */
++    private String artKey;
++    private boolean artIsCover;
++    /** True while the card is held back (focus is on the rows below the dock); it comes back with the next dock focus. */
++    private boolean suppressed;
++
++    private final Runnable tick = new Runnable() {
++        @Override
++        public void run() {
++            updateProgress();
++            if (track != null && track.playing && getVisibility() == VISIBLE) postDelayed(this, TICK_MS);
++        }
++    };
++
++    NowPlayingCard(Context ctx, Typeface font, Exits exits) {
++        super(ctx);
++        density = ctx.getResources().getDisplayMetrics().density;
++        setOrientation(VERTICAL);
++        setGravity(Gravity.CENTER_HORIZONTAL);
++        setFocusable(true);
++        setClickable(true);
++        setDescendantFocusability(FOCUS_BLOCK_DESCENDANTS);
++        setVisibility(GONE);
++        setAlpha(0f);
++        setPadding(dp(PAD), dp(PAD), dp(PAD), dp(PAD + 2));
++        setOnClickListener(v -> {
++            if (track != null) NowPlaying.open(getContext(), track);
++        });
++        setOnKeyListener((v, keyCode, event) -> {
++            if (event.getAction() != KeyEvent.ACTION_DOWN) return false;
++            switch (keyCode) {
++                case KeyEvent.KEYCODE_DPAD_UP:
++                    exits.up();
++                    return true;
++                case KeyEvent.KEYCODE_DPAD_DOWN:
++                    exits.down();
++                    return true;
++                case KeyEvent.KEYCODE_MENU:
++                    exits.dismiss();
++                    return true;
++                case KeyEvent.KEYCODE_DPAD_LEFT:
++                case KeyEvent.KEYCODE_DPAD_RIGHT:
++                    return true;    // the card is alone on its line: focus stays put
++                default:
++                    return false;
++            }
++        });
++        setOnFocusChangeListener((v, focused) -> {
++            setRing(focused);
++            animate().scaleX(focused ? 1.02f : 1f).scaleY(focused ? 1.02f : 1f).setDuration(120);
++        });
++
++        glass = new GradientDrawable();
++        glass.setColor(0xA6000000);
++        glass.setCornerRadius(dp(RADIUS));
++        setRing(false);
++        tint = new GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, new int[] {0, 0});
++        tint.setCornerRadius(dp(RADIUS));
++        setBackground(new LayerDrawable(new Drawable[] {glass, tint}));
++
++        art = new ImageView(ctx);
++        art.setScaleType(ImageView.ScaleType.CENTER_CROP);
++        LayoutParams alp = new LayoutParams(dp(ART), dp(ART));
++        alp.bottomMargin = dp(8);
++        addView(art, alp);
++
++        body = new LinearLayout(ctx);
++        body.setOrientation(VERTICAL);
++        kicker = text(ctx, font, 10.5f, 0x99FFFFFF);
++        kicker.setLetterSpacing(0.12f);
++        body.addView(kicker);
++        title = text(ctx, font, 17, 0xFFFFFFFF);
++        LayoutParams tlp = new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT);
++        tlp.topMargin = dp(3);
++        body.addView(title, tlp);
++        artist = text(ctx, font, 13, 0xA6FFFFFF);
++        body.addView(artist);
++
++        progress = new ProgressLine(ctx);
++        LayoutParams plp = new LayoutParams(LayoutParams.MATCH_PARENT, dp(3));
++        plp.topMargin = dp(9);
++        body.addView(progress, plp);
++
++        times = new LinearLayout(ctx);
++        times.setOrientation(HORIZONTAL);
++        elapsed = text(ctx, font, 10.5f, 0x99FFFFFF);
++        total = text(ctx, font, 10.5f, 0x99FFFFFF);
++        total.setGravity(Gravity.END);
++        times.addView(elapsed, new LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f));
++        times.addView(total, new LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f));
++        LayoutParams tmlp = new LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT);
++        tmlp.topMargin = dp(3);
++        body.addView(times, tmlp);
++
++        addView(body, new LayoutParams(dp(WIDTH - 2 * PAD), LayoutParams.WRAP_CONTENT));
++    }
++
++    /** Shows the track (dimmed while paused), or fades the card out for null. */
++    void bind(NowPlaying.Track t) {
++        track = t;
++        removeCallbacks(tick);
++        if (t == null) {
++            if (getVisibility() == VISIBLE) {
++                animate().alpha(0f).setDuration(200).withEndAction(() -> {
++                    if (track == null) setVisibility(GONE);
++                });
++            }
++            return;
++        }
++        title.setText(t.title);
++        artist.setText(t.artist);
++        artist.setVisibility(t.artist.isEmpty() ? GONE : VISIBLE);
++        String state = getContext().getString(t.playing ? R.string.np_playing : R.string.np_paused);
++        String app = appName(t.controller.getPackageName());
++        kicker.setText(app.isEmpty() ? state : app + "  ·  " + state);
++        // Apps like Spotify briefly send their own icon instead of the cover when play/pause changes:
++        // keep the cover for the same song, and only take an icon when there is nothing better.
++        String key = t.title + '\u0000' + t.artist;
++        boolean sameSong = key.equals(artKey);
++        if (t.art != null && (!sameSong || (t.artIsCover && !artIsCover))) {
++            art.setImageBitmap(roundedSquare(t.art, dp(ART), dp(16)));
++            art.setVisibility(VISIBLE);
++            setTint(coverColor(t.art));
++            artKey = key;
++            artIsCover = t.artIsCover;
++        } else if (t.art == null && !sameSong) {
++            art.setVisibility(GONE);
++            setTint(0);
++            artKey = key;
++            artIsCover = false;
++        }
++        float dim = t.playing ? 1f : 0.6f;
++        body.setAlpha(dim);
++        art.setAlpha(dim);
++        updateProgress();
++        if (suppressed) return;
++        setVisibility(VISIBLE);
++        animate().cancel();
++        animate().alpha(1f).setDuration(200);
++        if (t.playing) postDelayed(tick, TICK_MS);
++    }
++
++    /** Identifies the song shown (title and artist), or null; the same key MainActivity uses to keep a dismissed song hidden. */
++    static String songKey(NowPlaying.Track t) {
++        return t == null ? null : t.title + '\u0000' + t.artist;
++    }
++
++    String songKey() {
++        return songKey(track);
++    }
++
++    /** The package of the song shown, or null: its app is spared when memory is freed. */
++    String packageName() {
++        return track == null ? null : track.controller.getPackageName();
++    }
++
++    /** True when the card is on screen and can take focus. */
++    boolean canFocus() {
++        return track != null && !suppressed && getVisibility() == VISIBLE && getAlpha() > 0.5f;
++    }
++
++    /**
++     * Holds the card back while focus is on the rows below the dock, and brings it back when it returns to the
++     * dock. The song is still tracked meanwhile, so it shows the right one when it comes back.
++     */
++    void setSuppressed(boolean hold) {
++        if (hold == suppressed) return;
++        suppressed = hold;
++        if (track == null) return;
++        animate().cancel();
++        removeCallbacks(tick);
++        if (hold) {
++            animate().alpha(0f).setDuration(120).withEndAction(() -> {
++                if (suppressed) setVisibility(INVISIBLE);
++            });
++        } else {
++            setVisibility(VISIBLE);
++            animate().alpha(1f).setDuration(150);
++            if (track.playing) post(tick);
++        }
++    }
++
++    /** Stops the clock that moves the progress line; call when Home leaves the screen. */
++    void stop() {
++        removeCallbacks(tick);
++    }
++
++    private void setRing(boolean focused) {
++        glass.setStroke(focused ? dp(2) : Math.max(1, dp(1) / 2), focused ? 0xFFFFFFFF : 0x33FFFFFF);
++    }
++
++    private void updateProgress() {
++        if (track == null || track.duration <= 0) {
++            progress.setFraction(-1f);
++            times.setVisibility(INVISIBLE);
++            return;
++        }
++        long pos = track.position();
++        if (pos < 0) {
++            progress.setFraction(-1f);
++            times.setVisibility(INVISIBLE);
++            return;
++        }
++        progress.setFraction(Math.min(1f, (float) pos / track.duration));
++        elapsed.setText(clock(pos));
++        total.setText(clock(track.duration));
++        times.setVisibility(VISIBLE);
++    }
++
++    private static String clock(long ms) {
++        long s = Math.max(0, ms / 1000);
++        return String.format(Locale.US, "%d:%02d", s / 60, s % 60);
++    }
++
++    /** The music app's name as the TV lists it, or "" when it can't be read. */
++    private String appName(String pkg) {
++        try {
++            PackageManager pm = getContext().getPackageManager();
++            return String.valueOf(pm.getApplicationLabel(pm.getApplicationInfo(pkg, 0))).trim()
++                    .toUpperCase(Locale.getDefault());
++        } catch (PackageManager.NameNotFoundException | RuntimeException e) {
++            return "";
++        }
++    }
++
++    /** The cover's colour, from left to right: strong behind the cover, gone towards the end. */
++    private void setTint(int color) {
++        int c = color & 0x00FFFFFF;
++        tint.setColors(color == 0 ? new int[] {0, 0}
++                : new int[] {0x8C000000 | c, 0x40000000 | c, 0x0D000000 | c});
++    }
++
++    /**
++     * A colour for the glass from the cover: its average, made a little more vivid and kept mid-bright,
++     * so a dark or washed-out cover still gives a visible tint and a bright one doesn't glare.
++     */
++    private static int coverColor(Bitmap art) {
++        Bitmap one = Bitmap.createScaledBitmap(art, 1, 1, true);
++        int avg = one.getPixel(0, 0);
++        if (one != art) one.recycle();
++        float[] hsv = new float[3];
++        Color.colorToHSV(avg, hsv);
++        hsv[1] = Math.min(1f, hsv[1] * 1.4f);
++        hsv[2] = Math.max(0.45f, Math.min(0.75f, hsv[2]));
++        return Color.HSVToColor(hsv);
++    }
++
++    /** The picture cropped to a centred square, scaled to px, with rounded corners. */
++    private static Bitmap roundedSquare(Bitmap src, int px, int radius) {
++        int s = Math.min(src.getWidth(), src.getHeight());
++        Bitmap square = Bitmap.createBitmap(src, (src.getWidth() - s) / 2, (src.getHeight() - s) / 2, s, s);
++        Bitmap scaled = Bitmap.createScaledBitmap(square, px, px, true);
++        Bitmap out = Bitmap.createBitmap(px, px, Bitmap.Config.ARGB_8888);
++        Paint p = new Paint(Paint.ANTI_ALIAS_FLAG | Paint.FILTER_BITMAP_FLAG);
++        p.setShader(new BitmapShader(scaled, Shader.TileMode.CLAMP, Shader.TileMode.CLAMP));
++        new Canvas(out).drawRoundRect(new RectF(0, 0, px, px), radius, radius, p);
++        return out;
++    }
++
++    private static TextView text(Context ctx, Typeface font, float sp, int color) {
++        TextView t = new TextView(ctx);
++        t.setTextSize(TypedValue.COMPLEX_UNIT_SP, sp);
++        t.setTextColor(color);
++        t.setSingleLine(true);
++        t.setEllipsize(TextUtils.TruncateAt.END);
++        t.setIncludeFontPadding(false);
++        if (font != null) t.setTypeface(font);
++        return t;
++    }
++
++    private int dp(int v) {
++        return Math.round(v * density);
++    }
++
++    /** A thin track with the played part in white; hidden while the song's length or position is unknown. */
++    private static final class ProgressLine extends View {
++        private final Paint track = new Paint(Paint.ANTI_ALIAS_FLAG);
++        private final Paint fill = new Paint(Paint.ANTI_ALIAS_FLAG);
++        private final RectF rect = new RectF();
++        private float fraction = -1f;
++
++        ProgressLine(Context ctx) {
++            super(ctx);
++            track.setColor(0x40FFFFFF);
++            fill.setColor(0xE6FFFFFF);
++        }
++
++        void setFraction(float f) {
++            if (f == fraction) return;
++            fraction = f;
++            invalidate();
++        }
++
++        @Override
++        protected void onDraw(Canvas c) {
++            if (fraction < 0f) return;
++            float h = getHeight(), r = h / 2f;
++            rect.set(0, 0, getWidth(), h);
++            c.drawRoundRect(rect, r, r, track);
++            rect.set(0, 0, Math.max(h, getWidth() * fraction), h);
++            c.drawRoundRect(rect, r, r, fill);
++        }
++    }
++}
+diff --git a/launcher/app/src/main/java/com/gathin/tvhome/WallpaperPlayer.java b/launcher/app/src/main/java/com/gathin/tvhome/WallpaperPlayer.java
+index 8da8dfa6..77054580 100644
+--- a/launcher/app/src/main/java/com/gathin/tvhome/WallpaperPlayer.java
++++ b/launcher/app/src/main/java/com/gathin/tvhome/WallpaperPlayer.java
+@@ -33,6 +33,7 @@ import java.util.concurrent.Executors;
+ final class WallpaperPlayer {
+     private final FrameLayout root;
+     private final ImageView image;
++    private final ArtBackdrop art;
+     private final int backgroundColor;
+     private final List<File> files;
+     private final long interval;
+@@ -96,6 +97,20 @@ final class WallpaperPlayer {
+                     ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+             showFirst();
+         }
++        // The playing song's cover, blurred and light, goes over the wallpaper and the focused app's glow, and
++        // under the shelf's scrim, so the text on the left and the dock stay readable. The sharp cover is the
++        // now playing card's.
++        art = new ArtBackdrop(context, 0f, 0.5f, null);
++        View scrim = root.findViewById(R.id.heroScrim);
++        int at = scrim != null && root.indexOfChild(scrim) >= 0 ? root.indexOfChild(scrim)
++                : root.indexOfChild(image) >= 0 ? 1 : 0;
++        root.addView(art.view(), at, new FrameLayout.LayoutParams(
++                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
++    }
++
++    /** What is playing now: its blurred cover fades in over the wallpaper; null or no cover, it fades out. */
++    void showArt(NowPlaying.Track track) {
++        art.show(track);
+     }
+ 
+     /**
+diff --git a/launcher/app/src/main/res/drawable/ic_brightness.xml b/launcher/app/src/main/res/drawable/ic_brightness.xml
+new file mode 100644
+index 00000000..bd60b993
+--- /dev/null
++++ b/launcher/app/src/main/res/drawable/ic_brightness.xml
+@@ -0,0 +1,11 @@
++<?xml version="1.0" encoding="utf-8"?>
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="24dp"
++    android:height="24dp"
++    android:viewportWidth="24"
++    android:viewportHeight="24"
++    android:tint="#FFFFFF">
++    <path
++        android:fillColor="#FFFFFF"
++        android:pathData="M20,15.31L23.31,12 20,8.69V4h-4.69L12,0.69 8.69,4H4v4.69L0.69,12 4,15.31V20h4.69L12,23.31 15.31,20H20V15.31zM12,18V6c3.31,0 6,2.69 6,6s-2.69,6 -6,6z" />
++</vector>
+diff --git a/launcher/app/src/main/res/drawable/ic_memory.xml b/launcher/app/src/main/res/drawable/ic_memory.xml
+new file mode 100644
+index 00000000..0c899b5c
+--- /dev/null
++++ b/launcher/app/src/main/res/drawable/ic_memory.xml
+@@ -0,0 +1,11 @@
++<?xml version="1.0" encoding="utf-8"?>
++<vector xmlns:android="http://schemas.android.com/apk/res/android"
++    android:width="24dp"
++    android:height="24dp"
++    android:viewportWidth="24"
++    android:viewportHeight="24"
++    android:tint="#FFFFFF">
++    <path
++        android:fillColor="#FFFFFF"
++        android:pathData="M15,9H9v6h6V9zM13,13h-2v-2h2V13zM21,11V9h-2V7c0,-1.1 -0.9,-2 -2,-2h-2V3h-2v2h-2V3H9v2H7C5.9,5 5,5.9 5,7v2H3v2h2v2H3v2h2v2c0,1.1 0.9,2 2,2h2v2h2v-2h2v2h2v-2h2c1.1,0 2,-0.9 2,-2v-2h2v-2h-2v-2H21zM17,17H7V7h10V17z" />
++</vector>
+diff --git a/launcher/app/src/main/res/values-fr/strings.xml b/launcher/app/src/main/res/values-fr/strings.xml
+index 34b456f9..b0db3440 100644
+--- a/launcher/app/src/main/res/values-fr/strings.xml
++++ b/launcher/app/src/main/res/values-fr/strings.xml
+@@ -98,4 +98,9 @@
+     <string name="clock_format_system">Système</string>
+     <string name="clock_format_12">12 heures</string>
+     <string name="clock_format_24">24 heures</string>
++    <string name="np_playing">EN LECTURE</string>
++    <string name="np_paused">EN PAUSE</string>
++    <string name="brightness">Luminosité</string>
++    <string name="free_ram">Libérer la RAM</string>
++    <string name="free_ram_done">%1$d Mo libres (+%2$d Mo)</string>
+ </resources>
+diff --git a/launcher/app/src/main/res/values/strings.xml b/launcher/app/src/main/res/values/strings.xml
+index 2b2b53eb..f19fdd47 100644
+--- a/launcher/app/src/main/res/values/strings.xml
++++ b/launcher/app/src/main/res/values/strings.xml
+@@ -158,4 +158,9 @@
+     <string name="clock_format_system">System</string>
+     <string name="clock_format_12">12-hour</string>
+     <string name="clock_format_24">24-hour</string>
++    <string name="np_playing">NOW PLAYING</string>
++    <string name="np_paused">PAUSED</string>
++    <string name="brightness">Brightness</string>
++    <string name="free_ram">Free memory</string>
++    <string name="free_ram_done">%1$d MB free (+%2$d MB)</string>
+ </resources>
+diff --git a/launcher/app/src/test/java/com/gathin/tvhome/LibraryAppsTest.java b/launcher/app/src/test/java/com/gathin/tvhome/LibraryAppsTest.java
+index a8ed90e1..2a994327 100644
+--- a/launcher/app/src/test/java/com/gathin/tvhome/LibraryAppsTest.java
++++ b/launcher/app/src/test/java/com/gathin/tvhome/LibraryAppsTest.java
+@@ -55,8 +55,8 @@ public class LibraryAppsTest {
+ 
+     @Test public void missingShortcutsComeBeforeHomeAppsEvenWhenTheHomeAppIsNewer() {
+         long now = 100 * DAY;
+-        assertTrue(LibraryApps.comparePriority(false, DAY, true, now, now) < 0);
+-        assertTrue(LibraryApps.comparePriority(true, now, false, DAY, now) > 0);
++        assertTrue(LibraryApps.comparePriority(false, DAY, true, now, now) > 0);
++        assertTrue(LibraryApps.comparePriority(true, now, false, DAY, now) < 0);
+     }
+ 
+     @Test public void recentMissingAppsComeFirstButOlderAppsAndHomeAppsUseLabelOrder() {

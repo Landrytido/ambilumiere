@@ -1,0 +1,49 @@
+{
+  "dock_apps": [
+    "com.netflix.ninja",
+    "com.google.android.youtube.tv",
+    "com.spotify.tv.android",
+    "net.vypn.app",
+    "com.mediatek.wwtv.tvcenter"
+  ],
+  "hidden_apps": [
+    "com.mitv.gallery",
+    "com.xiaomi.mitv.manualhelp",
+    "com.xiaomi.mitv.mediaexplorer",
+    "com.xiaomi.mitv.smartshare",
+    "com.xiaomi.mitv.tvmanager",
+    "com.apgsolutionsllc.APGSOLUTIONSLLC0007",
+    "com.mitv.dream",
+    "io.github.maxhayim.sources"
+  ],
+  "launch_actions": [
+    "com.mediatek.wwtv.tvcenter=input:com.mediatek.tvinput/.hdmi.HDMIInputService/HDMI300004"
+  ],
+  "app_labels": [
+    "com.mediatek.wwtv.tvcenter=PS5"
+  ],
+  "app_banners": [
+    "com.mediatek.wwtv.tvcenter=banner_ps5"
+  ],
+  "greeting_name": "Landry",
+  "columns": 5,
+  "app_library": true,
+  "library_ok_opens": true,
+  "tile_menu": true,
+  "top_menu": true,
+  "background_color": "#090C14",
+  "wallpaper": true,
+  "wallpaper_dim": 55,
+  "clock_wallpaper": true,
+  "clock_wallpaper_dim": 55,
+  "top_bar_apps": ["com.gathin.tvlights"],
+  "rows_below_dock": 0,
+  "show_stats": true,
+  "cinematic_home": true,
+  "dock_glass": true,
+  "icon_only_buttons": true,
+  "app_glow": false,
+  "glow_style": "horizon",
+  "focus_overshoot": false,
+  "advanced_effects": false
+}

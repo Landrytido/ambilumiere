@@ -1,0 +1,8 @@
+{
+  "lights": [
+    {"id": "ruban", "name": "Ruban TV", "kind": "strip", "host": "192.168.1.20", "port": 6668,
+     "version": "3.5", "device_id": "REMPLACER", "key": "REMPLACER", "zones": 10},
+    {"id": "table", "name": "Table", "kind": "bulb", "host": "192.168.1.21", "port": 6668,
+     "version": "3.3", "device_id": "REMPLACER", "key": "REMPLACER"}
+  ]
+}
